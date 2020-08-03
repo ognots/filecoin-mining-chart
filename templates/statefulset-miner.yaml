@@ -1,0 +1,221 @@
+{{- if .Values.lotusMiner.enabled }}
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name}}-lotus-miner-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.toml: |
+    [API]
+      ListenAddress = "/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
+      RemoteListenAddress = "{{ .Values.lotusMiner.IP4 }}:2345"
+
+    [Libp2p]
+       ListenAddresses = ["/ip4/0.0.0.0/tcp/{{ .Values.lotusMiner.libp2pPort }}", "/ip6/::/tcp/{{ .Values.lotusMiner.libp2pPort }}"]
+
+    [Storage]
+      AllowPreCommit1 = false
+      AllowPreCommit2 = false
+      AllowCommit = false
+      AllowUnseal = true
+#  storage.json: |
+#    {
+#      "StoragePaths": [
+#        {
+#          "Path": "/var/lib/lotus-miner"
+#        },
+#        {
+#          "Path": "/scratch"
+#        }
+#      ]
+#    }
+  sectorstore.json: |
+    {
+      "ID": "0eedb0d9-9389-4d4d-8a09-27555472cf12",
+      "Weight": 10,
+      "CanSeal": false,
+      "CanStore": true
+    }
+#  sectorstore-scratch.json: |
+#    {
+#      "ID": "b61ea1a0-43f2-4fe1-b339-b28138d65f14",
+#      "Weight": 10,
+#      "CanSeal": true,
+#      "CanStore": false
+#    }
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-lotus-miner
+  labels:
+    app: lotus-miner-app
+spec:
+  replicas: {{ .Values.lotusMiner.replicaCount }}
+  serviceName: {{ template "chart.servicename" . }}
+  selector:
+    matchLabels:
+      app: lotus-miner-app
+  template:
+    metadata:
+      labels:
+        app: lotus-miner-app
+        chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+        heritage: {{ .Release.Service }}
+        release: {{ .Release.Name }}
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+{{- if .Values.securityContext.runAsNonRoot }}
+      securityContext:
+        # The image runs as uid 1000 by default, and needs to be able to write to
+        # the persistent volume to be able to start.
+        fsGroup: {{ .podSecurityContext.fsGroup }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+{{- end }}
+      volumes:
+        - name: lotus-secret-vol
+          secret:
+            secretName: {{ .Release.Name }}-lotus-secret
+            defaultMode: 384 # permission 0600
+        - name: lotus-miner-config-volume
+          configMap:
+            name: {{ .Release.Name}}-lotus-miner-config
+            items:
+            - key: config.toml
+              path: config.toml
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
+        - name: proof-params
+          persistentVolumeClaim:
+            claimName: {{.Values.lotusMiner.volumes.proofParams.claimName }}
+{{- end }}
+{{- if .Values.lotusMiner.volumes.tmp.enabled }}
+        - name: tmp
+          hostPath:
+            path: {{ .Values.lotusMiner.volumes.tmp.hostPath }}
+{{- end }}
+{{- if .Values.lotusMiner.volumes.scratch.enabled }}
+        - name: scratch
+          hostPath:
+            path: {{ .Values.lotusMiner.volumes.scratch.hostPath }}
+{{- end }}
+      initContainers:
+{{- if .Values.lotusMiner.init.wait.enabled }}
+      - name: wait
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusMiner.cpuArch }}
+        command: ["/bin/sh","-c"]
+        args: ["until test -f /var/lib/lotus-miner/ready; do sleep 5; done"]
+        env:
+          - name: LOTUS_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-lotus-secret
+                key: lotus.token
+          - name: FULLNODE_API_INFO
+            value: "$(LOTUS_TOKEN):/ip4/{{ .Values.lotus.IP4 }}/tcp/1234/http"
+          - name: LOTUS_STORAGE_PATH
+            value: /var/lib/lotus-miner
+          - name: GOLOG_LOG_FMT
+            value: "json"
+          - name: GOLOG_LOG_LEVEL
+            value: "{{ .Values.lotusMiner.gologLogLevel }}"
+          - name: FIL_PROOFS_PARAMETER_CACHE
+            value: /proof-params
+        volumeMounts:
+          - name: vol-miner
+            mountPath: /var/lib/lotus-miner
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
+          - name: proof-params
+            mountPath: /proof-params
+{{- end }}
+{{- end }}
+      containers:
+      - name: {{ .Chart.Name }}
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusMiner.cpuArch }}
+        command: ["lotus-miner", "run"]
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+          - name: LOTUS_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-lotus-secret
+                key: lotus.token
+          - name: FULLNODE_API_INFO
+            value: "$(LOTUS_TOKEN):/ip4/{{ .Values.lotus.IP4 }}/tcp/1234/http"
+          - name: LOTUS_STORAGE_PATH
+            value: /var/lib/lotus-miner
+          - name: GOLOG_LOG_FMT
+            value: "json"
+          - name: GOLOG_LOG_LEVEL
+            value: "{{ .Values.lotusMiner.gologLogLevel }}"
+          - name: TMPDIR
+            value: /tmp
+          - name: FIL_PROOFS_PARAMETER_CACHE
+            value: /proof-params
+          - name: FIL_PROOFS_MAXIMIZE_CACHING
+            value: "1"
+          - name: RUST_LOG
+            value: info
+          - name: BELLMAN_CUSTOM_GPU
+            value: {{ .Values.lotusMiner.GPU }}
+        ports:
+        - containerPort: 2345
+          name: api
+        volumeMounts:
+          - name: vol-miner
+            mountPath: /var/lib/lotus-miner
+          - name: lotus-miner-config-volume
+            mountPath: /var/lib/lotus-miner/config.toml
+            subPath: config.toml
+          #- name: lotus-miner-config-volume
+          #  mountPath: /var/lib/lotus-miner/sectorstore.json
+          #  subPath: sectorstore.json
+          - name: lotus-secret-vol
+            mountPath: /var/lib/lotus-miner/token
+            subPath: lotus-miner.token
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
+          - name: proof-params
+            mountPath: /proof-params
+{{- end }}
+{{- if .Values.lotusMiner.volumes.tmp.enabled }}
+          - name: tmp
+            mountPath: /tmp
+{{- end }}
+{{- if .Values.lotusMiner.volumes.scratch.enabled }}
+          - name: scratch
+            mountPath: /scratch
+{{- end }}
+        resources:
+{{ toYaml .Values.lotusMiner.resources | indent 10 }}
+  {{- if .Values.lotusMiner.persistence.enabled }}
+      nodeSelector:
+{{ toYaml .Values.lotusMiner.nodeSelector | indent 8 }}
+      tolerations:
+{{ toYaml .Values.lotusMiner.tolerations | indent 8 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: vol-miner
+        {{- range $key, $value := .Values.lotusMiner.persistence.lotusMiner.annotations }}
+            {{ $key }}: {{ $value }}
+        {{- end }}
+      spec:
+        accessModes:
+            {{- range .Values.lotusMiner.persistence.lotusMiner.accessModes }}
+            - {{ . | quote }}
+            {{- end }}
+        resources:
+            requests:
+                storage: {{ .Values.lotusMiner.persistence.lotusMiner.size | quote }}
+        {{- if .Values.lotusMiner.persistence.lotusMiner.storageClassName }}
+        {{- if (eq "-" .Values.lotusMiner.persistence.lotusMiner.storageClassName) }}
+        storageClassName: ""
+        {{- else }}
+        storageClassName: "{{ .Values.lotusMiner.persistence.lotusMiner.storageClassName }}"
+        {{- end }}
+        {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,272 @@
+# Default values for chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+hostNetwork: true
+
+image:
+  repository: stongo/lotus
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name:
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  # capabilities:
+  #   drop:
+  #   - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: false
+  runAsUser: 1000
+
+service:
+  # API service
+  type: ClusterIP
+  port: 1234
+  targetPort: 1234
+
+ingress:
+  enabled: true
+  hosts:
+  #- api.openworklabs.com
+  annotations:
+    nginx.ingress.kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization,Accept,Origin,DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Content-Length,Content-Range,Range"
+    nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+  #  nginx.ingress.kubernetes.io/server-alias: "_"
+  #  cert-manager.io/cluster-issuer: "letsencrypt-staging"
+  #  cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  #  tls:
+  #  - secretName: lotus-api-tls
+  #    hosts:
+  #      - api.openworklabs.com
+    nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+    nginx.ingress.kubernetes.io/modsecurity-snippet: |
+      SecRuleEngine On
+      SecDebugLog /tmp/modsec_debug.log
+
+lotus:
+  replicaCount: 1
+  cpuArch: intel
+  IP4: 192.168.1.2
+  libp2pPort: 14321
+  nickname: fm-ops
+  ingressApi:
+    enabled: false
+    hosts:
+    - api.openworklabs.com
+    annotations:
+      nginx.ingress.kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization,Accept,Origin,DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Content-Length,Content-Range,Range"
+      # cert-manager.io/cluster-issuer: "letsencrypt-staging"
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    #tls:
+    #  - secretName: lotus-api-tls
+    #    hosts:
+    #      - api.openworklabs.com
+
+  exportChain: false
+
+  init:
+    sync:
+      enabled: false
+    import:
+      enabled: false
+      # ideally a shared volume containing chain dump
+      volume: {}
+        #- name: filecoin-chain-vol
+        #  persistentVolumeClaim:
+        #    claimName: efs-claim
+
+  copyKeys: false
+
+  volumes:
+    proofParams:
+      enabled: true
+      claimName: proof-params-pvc
+
+  resources: #{}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+    limits:
+      cpu: 3000m
+      memory: 12Gi
+
+  persistence:
+    enabled: true
+    ## Filecoin data Persistent Volume Storage Class
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+    lotus:
+      size: "500Gi"
+      storageClassName: rook-ceph-block
+      accessModes:
+        - ReadWriteOnce
+
+  nodeSelector:
+    role: lotus-miner
+
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "lotus-miner"
+      effect: "NoSchedule"
+
+  affinity: {}
+
+lotusMiner:
+  enabled: true
+  cpuArch: intel
+  replicaCount: 1
+  IP4: 192.168.1.2
+  libp2pPort: 15432
+  gologLogLevel: info
+  GPU: "Tesla V100-SXM2-32GB:5120"
+
+  init:
+    wait:
+      enabled: true
+
+  volumes:
+    proofParams:
+      enabled: true
+      claimName: proof-params-pvc
+    tmp:
+      enabled: true
+      hostPath: /mnt/tmp
+    scratch:
+      enabled: true
+      hostPath: /mnt/md0
+
+  resources: #{}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    requests:
+      cpu: 16
+      memory: 128Gi
+
+  persistence:
+    enabled: true
+    ## Filecoin data Persistent Volume Storage Class
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+    lotusMiner:
+      size: "150Ti"
+      storageClassName: csi-cephfs
+      accessModes:
+        - ReadWriteMany
+
+  nodeSelector:
+    role: lotus-miner
+
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "lotus-miner"
+      effect: "NoSchedule"
+
+  affinity: {}
+
+lotusPrecomm1Worker:
+  enabled: true
+  cpuArch: amd
+  replicaCount: 2
+  gologLogLevel: info
+
+  volumes:
+    proofParams:
+      enabled: true
+      claimName: proof-params-pvc
+    tmp:
+      enabled: true
+      hostPath: /mnt/tmp
+    scratch:
+      enabled: true
+      hostPath: /mnt/md0
+
+  resources: #{}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    requests:
+      cpu: 1
+      memory: 60Gi
+
+  nodeSelector:
+    role: lotus-precomm1-worker
+
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "lotus-precomm1-worker"
+      effect: "NoSchedule"
+
+  affinity: {}
+
+lotusPrecomm2CommWorker:
+  enabled: true
+  replicaCount: 1
+  gologLogLevel: info
+  GPU: "Tesla V100-SXM2-32GB:5120"
+
+  volumes:
+    proofParams:
+      enabled: true
+      claimName: proof-params-pvc
+    tmp:
+      enabled: true
+      hostPath: /mnt/tmp
+    scratch:
+      enabled: true
+      hostPath: /mnt/md0
+
+  resources: #{}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    requests:
+      cpu: 12
+      memory: 128Gi
+
+  nodeSelector:
+    role: lotus-precomm2-comm-worker
+
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "lotus-precomm2-comm-worker"
+      effect: "NoSchedule"
+
+  affinity: {}
+

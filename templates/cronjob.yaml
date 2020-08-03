@@ -1,0 +1,72 @@
+{{- if .Values.lotus.exportChain }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-scripts
+data:
+  export-chain.sh: |
+    #!/bin/sh
+    until [ ! -f "/chain/chain.car.lock" ]; do
+      echo "-- Unable to acquire lock.\n retrying in 30s"
+      sleep 30
+    done
+    echo "-- acquiring lock"
+    touch /chain/chain.car.lock
+    lotus chain export /chain/chain.car
+    rm /chain/chain.car.lock
+
+---
+
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-lotus-chain-exporter
+  labels:
+    app: lotus-chain-exporter
+spec:
+  schedule: "0 20 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+{{- if .Values.securityContext.runAsNonRoot }}
+          securityContext:
+            # The image runs as uid 1000 by default, and needs to be able to write to
+            # the persistent volume to be able to start.
+            fsGroup: {{ .podSecurityContext.fsGroup }}
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+{{- end }}
+          volumes:
+            - name: lotus-vol
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-lotus-vol-{{ .Release.Name }}-lotus-node-app-0
+                readOnly: true
+            - name: scripts
+              configMap:
+                name: {{ .Release.Name }}-scripts
+                defaultMode: 0777
+{{ toYaml .Values.lotus.init.import.volume | indent 12 }}
+          containers:
+            - name: {{ .Chart.Name }}
+              image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+              command: ["/bin/sh", "-c", "/scripts/export-chain.sh"]
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              volumeMounts:
+                - name: lotus-vol
+                  mountPath: /root/.lotus
+                - name: {{ (index .Values.lotus.init.import.volume 0).name }}
+                  mountPath: /chain
+                - name: scripts
+                  mountPath: /scripts/export-chain.sh
+                  subPath: export-chain.sh
+              env:
+                - name: LOTUS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: lotus-secrets
+                      key: {{ .Release.Name }}-token
+                - name: FULLNODE_API_INFO
+                  value: "$(LOTUS_TOKEN):/dns4/{{ .Release.Name }}-lotus-node-service.{{ .Release.Namespace }}.svc.cluster.local/tcp/1234/http"
+{{- end }}

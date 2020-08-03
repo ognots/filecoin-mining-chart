@@ -1,0 +1,207 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name}}-lotus-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.toml: |
+    [API]
+      ListenAddress = "/ip4/{{ .Values.lotus.IP4 }}/tcp/1234/http"
+      RemoteListenAddress = "{{ .Values.lotus.IP4 }}:1234"
+    #  Timeout = "30s"
+    #
+    [Libp2p]
+      ListenAddresses = ["/ip4/0.0.0.0/tcp/{{ .Values.lotus.libp2pPort }}", "/ip6/::/tcp/{{ .Values.lotus.libp2pPort }}"]
+    #  AnnounceAddresses = []
+    #  NoAnnounceAddresses = []
+    #  ConnMgrLow = 150
+    #  ConnMgrHigh = 180
+    #  ConnMgrGrace = "20s"
+    #
+    [Pubsub]
+    #  Bootstrapper = false
+    #  RemoteTracer = "/ip4/147.75.67.199/tcp/4001/p2p/QmTd6UvR47vUidRNZ1ZKXHrAFhqTJAD27rKL9XYghEKgKX"
+    #
+    [Client]
+    #  UseIpfs = false
+    #  IpfsMAddr = ""
+    #  IpfsUseForRetrieval = false
+    #
+    [Metrics]
+      Nickname = "{{ .Values.lotus.nickname }}"
+    #  HeadNotifs = false
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-lotus
+  labels:
+    app: lotus-node-app
+spec:
+  replicas: {{ .Values.lotus.replicaCount }}
+  serviceName: {{ template "chart.servicename" . }}
+  selector:
+    matchLabels:
+      app: lotus-node-app
+  template:
+    metadata:
+      labels:
+        app: lotus-node-app
+        chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+        heritage: {{ .Release.Service }}
+        release: {{ .Release.Name }}
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+{{- if .Values.securityContext.runAsNonRoot }}
+      securityContext:
+        # The image runs as uid 1000 by default, and needs to be able to write to
+        # the persistent volume to be able to start.
+        fsGroup: {{ .podSecurityContext.fsGroup }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+{{- end }}
+      volumes:
+        - name: lotus-config-volume
+          configMap:
+            name: {{ .Release.Name}}-lotus-config
+            items:
+            - key: config.toml
+              path: config.toml
+        - name: lotus-secret-vol
+          secret:
+            secretName: {{ .Release.Name }}-lotus-secret
+            defaultMode: 384 # permission 0600
+{{- if .Values.lotus.volumes.proofParams.enabled }}
+        - name: proof-params
+          persistentVolumeClaim:
+            claimName: {{.Values.lotus.volumes.proofParams.claimName }}
+{{- end }}
+      initContainers:
+{{- if .Values.lotus.copyKeys }}
+      - name: api-keys
+        image: busybox
+        command: ["/bin/sh","-c"]
+        args: ["mkdir -p /lotus/keystore; cp /secret/privatekey /lotus/keystore/MF2XI2BNNJ3XILLQOJUXMYLUMU; cp /secret/token /lotus/token"]
+        volumeMounts:
+          - name: lotus-secret-vol
+            mountPath: "/secret"
+          - name: vol
+            mountPath: /lotus
+{{- end }}
+{{- if .Values.lotus.init.import.enabled }}
+      - name: import-wait
+        image: debian:stable
+        command: ["/bin/sh","-c"]
+        args: ["until [ -f /chain/chain.car ] && [ ! -f /chain/chain.car.lock ]; do sleep 5; done"]
+        volumeMounts:
+          - name: {{ (index .Values.lotus.init.import.volume 0).name }}
+            mountPath: /chain
+{{- end }}
+{{- if .Values.lotus.init.import.enabled }}
+      - name: import-start
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
+        command: ["/bin/entrypoint","-i"]
+        env:
+          - name: LOTUS_PATH
+            value: /var/lib/lotus
+        volumeMounts:
+          - name: vol
+            mountPath: /var/lib/lotus
+          - name: {{ (index .Values.lotus.init.import.volume 0).name }}
+            mountPath: /chain
+{{- end }}
+{{- if .Values.lotus.init.sync.enabled }}
+      - name: sync-wait
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
+        command: ["/bin/entrypoint","-s"]
+        env:
+          - name: LOTUS_PATH
+            value: /var/lib/lotus
+        volumeMounts:
+          - name: vol
+            mountPath: /var/lib/lotus
+{{- end }}
+      containers:
+      - name: {{ .Chart.Name }}
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
+        command: ["/bin/entrypoint","-d"]
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+          - name: LOTUS_PATH
+            value: /var/lib/lotus
+          - name: GOLOG_LOG_FMT
+            value: "json"
+          - name: GOLOG_LOG_LEVEL
+            value: "info"
+          - name: TMPDIR
+            value: /tmp
+          - name: FIL_PROOFS_PARAMETER_CACHE
+            value: /proof-params
+        #livenessProbe:
+        #  httpGet:
+        #    path: /debug/metrics
+        #    port: api
+        #  initialDelaySeconds: 90
+        #  periodSeconds: 10
+        #readinessProbe:
+        #  httpGet:
+        #    path: /debug/metrics
+        #    port: api
+        #  initialDelaySeconds: 120
+        #  periodSeconds: 10
+        ports:
+        - containerPort: 1234
+          name: api
+        - containerPort: 1235
+          name: p2p
+        volumeMounts:
+          - name: vol
+            mountPath: /var/lib/lotus
+          - name: lotus-config-volume
+            mountPath: /var/lib/lotus/config.toml
+            subPath: config.toml
+          - name: lotus-secret-vol
+            mountPath: /var/lib/lotus/token
+            subPath: lotus.token
+        {{- if and (.Values.lotus.init.import.volume) (.Values.lotus.init.import.enabled) }}
+          - name: {{ (index .Values.lotus.init.import.volume 0).name }}
+            mountPath: /chain
+        {{- end }}
+{{- if .Values.lotus.volumes.proofParams.enabled }}
+          - name: proof-params
+            mountPath: /proof-params
+{{- end }}
+        resources:
+{{ toYaml .Values.lotus.resources | indent 10 }}
+      nodeSelector:
+{{ toYaml .Values.lotus.nodeSelector | indent 8 }}
+      tolerations:
+{{ toYaml .Values.lotus.tolerations | indent 8 }}
+  {{- if .Values.lotus.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: vol
+        {{- range $key, $value := .Values.lotus.persistence.lotus.annotations }}
+            {{ $key }}: {{ $value }}
+        {{- end }}
+      spec:
+        accessModes:
+            {{- range .Values.lotus.persistence.lotus.accessModes }}
+            - {{ . | quote }}
+            {{- end }}
+        resources:
+            requests:
+                storage: {{ .Values.lotus.persistence.lotus.size | quote }}
+        {{- if .Values.lotus.persistence.lotus.storageClassName }}
+        {{- if (eq "-" .Values.lotus.persistence.lotus.storageClassName) }}
+        storageClassName: ""
+        {{- else }}
+        storageClassName: "{{ .Values.lotus.persistence.lotus.storageClassName }}"
+        {{- end }}
+        {{- end }}
+
+  {{- end }}

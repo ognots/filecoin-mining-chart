@@ -1,0 +1,71 @@
+{{- if .Values.lotus.exportChain }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-publish-scripts
+data:
+  publish-chain.sh: |
+    #!/bin/sh
+    until [ ! -f "/chain/chain.car.lock" ]; do
+      echo "-- Unable to acquire lock.\n retrying in 30s"
+      sleep 30
+    done
+    echo "-- acquiring lock"
+    touch /chain/chain.car.lock
+    /usr/bin/aws s3 cp /chain/chain.car s3://filecoin-chain-snapshot/chain.car
+    rm /chain/chain.car.lock
+
+---
+
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-lotus-chain-publisher
+  labels:
+    app: lotus-chain-publisher
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+{{- if .Values.securityContext.runAsNonRoot }}
+          securityContext:
+            # The image runs as uid 1000 by default, and needs to be able to write to
+            # the persistent volume to be able to start.
+            fsGroup: {{ .podSecurityContext.fsGroup }}
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+{{- end }}
+          volumes:
+            - name: scripts
+              configMap:
+                name: {{ .Release.Name }}-publish-scripts
+                defaultMode: 0777
+{{ toYaml .Values.lotus.init.import.volume | indent 12 }}
+          containers:
+            - name: {{ .Chart.Name }}
+              image: "infrastructureascode/aws-cli:1.18.16"
+              command: ["/bin/sh", "-c", "/scripts/publish-chain.sh"]
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              volumeMounts:
+                - name: {{ (index .Values.lotus.init.import.volume 0).name }}
+                  mountPath: /chain
+                - name: scripts
+                  mountPath: /scripts/publish-chain.sh
+                  subPath: publish-chain.sh
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-cli
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-cli
+                      key: aws-secret-access-key
+                - name: AWS_DEFAULT_REGION
+                  value: "us-east-2"
+{{ end }}

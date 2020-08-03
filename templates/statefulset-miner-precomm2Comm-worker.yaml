@@ -1,0 +1,119 @@
+{{- if .Values.lotusPrecomm2CommWorker.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-lotus-worker-precomm2-comm
+  labels:
+    app: lotus-worker-precomm2-comm-app
+spec:
+  replicas: {{ .Values.lotusPrecomm2CommWorker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: lotus-worker-precomm2-comm-app
+  template:
+    metadata:
+      labels:
+        app: lotus-worker-precomm2-comm-app
+        chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+        heritage: {{ .Release.Service }}
+        release: {{ .Release.Name }}
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+{{- if .Values.securityContext.runAsNonRoot }}
+      securityContext:
+        # The image runs as uid 1000 by default, and needs to be able to write to
+        # the persistent volume to be able to start.
+        fsGroup: {{ .podSecurityContext.fsGroup }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+{{- end }}
+      volumes:
+        - name: lotus-secret-vol
+          secret:
+            secretName: {{ .Release.Name }}-lotus-secret
+            defaultMode: 384 # permission 0600
+        - name: vol-miner
+          persistentVolumeClaim:
+            claimName: vol-miner-mining-pool0-lotus-miner-0
+{{- if .Values.lotusPrecomm2CommWorker.volumes.proofParams.enabled }}
+        - name: proof-params
+          persistentVolumeClaim:
+            claimName: {{.Values.lotusPrecomm2CommWorker.volumes.proofParams.claimName }}
+{{- end }}
+{{- if .Values.lotusPrecomm2CommWorker.volumes.tmp.enabled }}
+        - name: tmp
+          hostPath:
+            path: {{ .Values.lotusPrecomm2CommWorker.volumes.tmp.hostPath }}
+{{- end }}
+{{- if .Values.lotusPrecomm2CommWorker.volumes.scratch.enabled }}
+        - name: scratch
+          hostPath:
+            path: {{ .Values.lotusPrecomm2CommWorker.volumes.scratch.hostPath }}
+{{- end }}
+      initContainers:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusMiner.cpuArch }}
+        command: ["lotus-worker", "run", "--precommit1", "false", "--no-local-storage", "true"]
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+          - name: LOTUS_MINER_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-lotus-secret
+                key: lotus-miner.token
+          - name: MINER_API_INFO
+            value: "$(LOTUS_MINER_TOKEN):/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
+          - name: LOTUS_STORAGE_PATH
+            value: /var/lib/lotus-miner
+          - name: GOLOG_LOG_FMT
+            value: "json"
+          - name: GOLOG_LOG_LEVEL
+            value: "{{ .Values.lotusPrecomm2CommWorker.gologLogLevel }}"
+          - name: TMPDIR
+            value: /tmp
+          - name: FIL_PROOFS_PARAMETER_CACHE
+            value: /proof-params
+          - name: FIL_PROOFS_MAXIMIZE_CACHING
+            value: "1"
+          - name: RUST_LOG
+            value: info
+          - name: FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE
+            value: "600000"
+          - name: FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE
+            value: "1000000"
+          - name: FIL_PROOFS_USE_GPU_COLUMN_BUILDER
+            value: "1"
+          - name: FIL_PROOFS_USE_GPU_TREE_BUILDER
+            value: "1"
+          - name: BELLMAN_CUSTOM_GPU
+            value: {{ .Values.lotusPrecomm2CommWorker.GPU }}
+        ports:
+        - containerPort: 3456
+          name: api
+        volumeMounts:
+          - name: vol-miner
+            mountPath: /var/lib/lotus-miner
+{{- if .Values.lotusPrecomm2CommWorker.volumes.proofParams.enabled }}
+          - name: proof-params
+            mountPath: /proof-params
+{{- end }}
+{{- if .Values.lotusPrecomm2CommWorker.volumes.tmp.enabled }}
+          - name: tmp
+            mountPath: /tmp
+{{- end }}
+{{- if .Values.lotusPrecomm2CommWorker.volumes.scratch.enabled }}
+          - name: scratch
+            mountPath: /scratch
+{{- end }}
+        resources:
+{{ toYaml .Values.lotusPrecomm2CommWorker.resources | indent 10 }}
+      nodeSelector:
+{{ toYaml .Values.lotusPrecomm2CommWorker.nodeSelector | indent 8 }}
+      tolerations:
+{{ toYaml .Values.lotusPrecomm2CommWorker.tolerations | indent 8 }}
+{{- end }}
