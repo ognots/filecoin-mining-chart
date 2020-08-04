@@ -44,21 +44,16 @@ spec:
           persistentVolumeClaim:
             claimName: {{.Values.lotusPrecomm2CommWorker.volumes.proofParams.claimName }}
 {{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.tmp.enabled }}
-        - name: tmp
+{{- if .Values.lotusPrecomm2CommWorker.volumes.repo.enabled }}
+        - name: repo
           hostPath:
-            path: {{ .Values.lotusPrecomm2CommWorker.volumes.tmp.hostPath }}
-{{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.scratch.enabled }}
-        - name: scratch
-          hostPath:
-            path: {{ .Values.lotusPrecomm2CommWorker.volumes.scratch.hostPath }}
+            path: {{ .Values.lotusPrecomm2CommWorker.volumes.repo.hostPath }}
 {{- end }}
       initContainers:
       containers:
       - name: {{ .Chart.Name }}
         image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusMiner.cpuArch }}
-        command: ["lotus-worker", "run", "--precommit1", "false", "--no-local-storage", "true"]
+        command: ["lotus-worker", "run", "--precommit1=false"]
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
           - name: LOTUS_MINER_TOKEN
@@ -70,12 +65,12 @@ spec:
             value: "$(LOTUS_MINER_TOKEN):/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
           - name: LOTUS_STORAGE_PATH
             value: /var/lib/lotus-miner
+          - name: LOTUS_WORKER_PATH
+            value: /var/lib/lotus-worker
           - name: GOLOG_LOG_FMT
             value: "json"
           - name: GOLOG_LOG_LEVEL
             value: "{{ .Values.lotusPrecomm2CommWorker.gologLogLevel }}"
-          - name: TMPDIR
-            value: /tmp
           - name: FIL_PROOFS_PARAMETER_CACHE
             value: /proof-params
           - name: FIL_PROOFS_MAXIMIZE_CACHING
@@ -102,13 +97,9 @@ spec:
           - name: proof-params
             mountPath: /proof-params
 {{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.tmp.enabled }}
-          - name: tmp
-            mountPath: /tmp
-{{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.scratch.enabled }}
-          - name: scratch
-            mountPath: /scratch
+{{- if .Values.lotusPrecomm2CommWorker.volumes.repo.enabled }}
+          - name: repo
+            mountPath: /var/lib/lotus-worker
 {{- end }}
         resources:
 {{ toYaml .Values.lotusPrecomm2CommWorker.resources | indent 10 }}
