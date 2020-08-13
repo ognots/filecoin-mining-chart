@@ -125,6 +125,18 @@ spec:
           - name: vol
             mountPath: /var/lib/lotus
 {{- end }}
+{{- if .Values.lotus.init.wait.enabled }}
+      - name: wait
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
+        command: ["/bin/sh","-c"]
+        args: ["until test -f /var/lib/lotus/ready; do sleep 5; done"]
+        env:
+          - name: LOTUS_PATH
+            value: /var/lib/lotus
+        volumeMounts:
+          - name: vol
+            mountPath: /var/lib/lotus
+{{- end }}
       containers:
       - name: {{ .Chart.Name }}
         image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
@@ -141,18 +153,18 @@ spec:
             value: /tmp
           - name: FIL_PROOFS_PARAMETER_CACHE
             value: /proof-params
-        #livenessProbe:
-        #  httpGet:
-        #    path: /debug/metrics
-        #    port: api
-        #  initialDelaySeconds: 90
-        #  periodSeconds: 10
-        #readinessProbe:
-        #  httpGet:
-        #    path: /debug/metrics
-        #    port: api
-        #  initialDelaySeconds: 120
-        #  periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /debug/metrics
+            port: api
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /debug/metrics
+            port: api
+          initialDelaySeconds: 120
+          periodSeconds: 10
         ports:
         - containerPort: 1234
           name: api
@@ -164,9 +176,6 @@ spec:
           - name: lotus-config-volume
             mountPath: /var/lib/lotus/config.toml
             subPath: config.toml
-          - name: lotus-secret-vol
-            mountPath: /var/lib/lotus/token
-            subPath: lotus.token
         {{- if and (.Values.lotus.init.import.volume) (.Values.lotus.init.import.enabled) }}
           - name: {{ (index .Values.lotus.init.import.volume 0).name }}
             mountPath: /chain
