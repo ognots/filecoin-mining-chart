@@ -20,31 +20,6 @@ data:
       AllowPreCommit2 = false
       AllowCommit = false
       AllowUnseal = true
-#  storage.json: |
-#    {
-#      "StoragePaths": [
-#        {
-#          "Path": "/var/lib/lotus-miner"
-#        },
-#        {
-#          "Path": "/scratch"
-#        }
-#      ]
-#    }
-  sectorstore.json: |
-    {
-      "ID": "0eedb0d9-9389-4d4d-8a09-27555472cf12",
-      "Weight": 10,
-      "CanSeal": false,
-      "CanStore": true
-    }
-#  sectorstore-scratch.json: |
-#    {
-#      "ID": "b61ea1a0-43f2-4fe1-b339-b28138d65f14",
-#      "Weight": 10,
-#      "CanSeal": true,
-#      "CanStore": false
-#    }
 
 ---
 apiVersion: apps/v1
@@ -135,6 +110,8 @@ spec:
 {{- end }}
       containers:
       - name: {{ .Chart.Name }}
+        securityContext:
+          privileged: true
         image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusMiner.cpuArch }}
         command: ["lotus-miner", "run"]
         imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -147,21 +124,21 @@ spec:
           - name: FULLNODE_API_INFO
             value: "$(LOTUS_TOKEN):/ip4/{{ .Values.lotus.IP4 }}/tcp/1234/http"
           - name: LOTUS_STORAGE_PATH
-            value: /var/lib/lotus-miner
+            value: "/var/lib/lotus-miner"
           - name: GOLOG_LOG_FMT
             value: "json"
           - name: GOLOG_LOG_LEVEL
             value: "{{ .Values.lotusMiner.gologLogLevel }}"
           - name: TMPDIR
-            value: /tmp
+            value: "/tmp"
           - name: FIL_PROOFS_PARAMETER_CACHE
             value: /proof-params
           - name: FIL_PROOFS_MAXIMIZE_CACHING
             value: "1"
           - name: RUST_LOG
-            value: info
+            value: "info"
           - name: BELLMAN_CUSTOM_GPU
-            value: {{ .Values.lotusMiner.GPU }}
+            value: "{{ .Values.lotusMiner.GPU }}"
         ports:
         - containerPort: 2345
           name: api
@@ -171,12 +148,6 @@ spec:
           - name: lotus-miner-config-volume
             mountPath: /var/lib/lotus-miner/config.toml
             subPath: config.toml
-          #- name: lotus-miner-config-volume
-          #  mountPath: /var/lib/lotus-miner/sectorstore.json
-          #  subPath: sectorstore.json
-          - name: lotus-secret-vol
-            mountPath: /var/lib/lotus-miner/token
-            subPath: lotus-miner.token
 {{- if .Values.lotusMiner.volumes.proofParams.enabled }}
           - name: proof-params
             mountPath: /proof-params
