@@ -11,15 +11,71 @@ data:
     [API]
       ListenAddress = "/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
       RemoteListenAddress = "{{ .Values.lotusMiner.IP4 }}:2345"
-
+    #  Timeout = "30s"
+    #
     [Libp2p]
        ListenAddresses = ["/ip4/0.0.0.0/tcp/{{ .Values.lotusMiner.libp2pPort }}", "/ip6/::/tcp/{{ .Values.lotusMiner.libp2pPort }}"]
-
+    #  AnnounceAddresses = []
+    #  NoAnnounceAddresses = []
+    #  ConnMgrLow = 150
+    #  ConnMgrHigh = 180
+    #  ConnMgrGrace = "20s"
+    #
+    [Pubsub]
+    #  Bootstrapper = false
+    #  RemoteTracer = "/dns4/pubsub-tracer.filecoin.io/tcp/4001/p2p/QmTd6UvR47vUidRNZ1ZKXHrAFhqTJAD27rKL9XYghEKgKX"
+    #
+    [Dealmaking]
+      ConsiderOnlineStorageDeals = true 
+      ConsiderOfflineStorageDeals = true 
+    #  ConsiderOnlineRetrievalDeals = true
+    #  ConsiderOfflineRetrievalDeals = true
+    #  PieceCidBlocklist = []
+    #  ExpectedSealDuration = "12h0m0s"
+    #  Filter = ""
+    #
+    [Sealing]
+    #  MaxWaitDealsSectors = 2
+    #  MaxSealingSectors = 0
+    #  MaxSealingSectorsForDeals = 0
+    #  WaitDealsDelay = "1h0m0s"
+    #
     [Storage]
+      ParallelFetchLimit = 5 
+    #  AllowAddPiece = true
       AllowPreCommit1 = false
       AllowPreCommit2 = false
       AllowCommit = false
       AllowUnseal = true
+    #  AllowPreCommit1 = true
+    #  AllowPreCommit2 = true
+    #  AllowCommit = true
+    #  AllowUnseal = true
+    #
+    [Fees]
+    #  MaxPreCommitGasFee = "0.05 FIL"
+    #  MaxCommitGasFee = "0.05 FIL"
+    #  MaxWindowPoStGasFee = "50 FIL"
+    #
+      
+  remote-setup.bash: |
+    #!/bin/bash
+    set -e
+    miner_ip=${1}
+    if [[ -z miner_ip ]]; then
+        echo "miner_ip argument must be set"
+        exit 1
+    fi
+    echo "-- generate api token"
+    echo "token: $(lotus-miner auth create-token --perm admin)"
+    echo "-- disable miner storage sealing capabilities"
+    cat /var/lib/lotus-miner/sectorstore.json | jq -r '.CanSeal = false' | tee /var/lib/lotus-miner/sectorstore.json
+    echo "-- attach sealing disk"
+    lotus-miner storage attach --init --seal /scratch
+    echo "-- set actor address"
+    wait_msg="$(lotus-miner actor set-addrs /ip4/${miner_ip}/tcp/15432)"
+    echo "-- confirmation message"
+    echo $wait_msg
 
 ---
 apiVersion: apps/v1
@@ -63,6 +119,9 @@ spec:
             items:
             - key: config.toml
               path: config.toml
+            - key: remote-setup.bash
+              path: remote-setup.bash
+              mode: 0777
 {{- if .Values.lotusMiner.volumes.proofParams.enabled }}
         - name: proof-params
           persistentVolumeClaim:
@@ -99,13 +158,23 @@ spec:
           - name: GOLOG_LOG_LEVEL
             value: "{{ .Values.lotusMiner.gologLogLevel }}"
           - name: FIL_PROOFS_PARAMETER_CACHE
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
             value: /proof-params
+{{- else if .Values.lotusMiner.volumes.scratch.enabled }}
+            value: /scratch/proof-params
+{{- else }}
+            value: /var/tmp/filecoin-proof-parameters
+{{- end }}
         volumeMounts:
           - name: vol-miner
             mountPath: /var/lib/lotus-miner
 {{- if .Values.lotusMiner.volumes.proofParams.enabled }}
           - name: proof-params
             mountPath: /proof-params
+{{- end }}
+{{- if .Values.lotusMiner.volumes.scratch.enabled }}
+          - name: scratch
+            mountPath: /scratch
 {{- end }}
 {{- end }}
       containers:
@@ -132,7 +201,13 @@ spec:
           - name: TMPDIR
             value: "/tmp"
           - name: FIL_PROOFS_PARAMETER_CACHE
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
             value: /proof-params
+{{- else if .Values.lotusMiner.volumes.scratch.enabled }}
+            value: /scratch/proof-params
+{{- else }}
+            value: /var/tmp/filecoin-proof-parameters
+{{- end }}
           - name: FIL_PROOFS_MAXIMIZE_CACHING
             value: "1"
           - name: RUST_LOG
@@ -148,6 +223,9 @@ spec:
           - name: lotus-miner-config-volume
             mountPath: /var/lib/lotus-miner/config.toml
             subPath: config.toml
+          - name: lotus-miner-config-volume
+            mountPath: /usr/local/bin/remote-setup.bash
+            subPath: remote-setup.bash
 {{- if .Values.lotusMiner.volumes.proofParams.enabled }}
           - name: proof-params
             mountPath: /proof-params

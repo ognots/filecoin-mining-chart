@@ -31,6 +31,10 @@ data:
     [Metrics]
       Nickname = "{{ .Values.lotus.nickname }}"
     #  HeadNotifs = false
+  remote-setup.bash: |
+    #!/bin/bash
+    echo "token: $(lotus auth create-token --perm admin)"
+    echo "wallet: $(lotus wallet new bls)"
 
 ---
 
@@ -71,6 +75,9 @@ spec:
             items:
             - key: config.toml
               path: config.toml
+            - key: remote-setup.bash
+              path: remote-setup.bash
+              mode: 0777
         - name: lotus-secret-vol
           secret:
             secretName: {{ .Release.Name }}-lotus-secret
@@ -79,6 +86,11 @@ spec:
         - name: proof-params
           persistentVolumeClaim:
             claimName: {{.Values.lotus.volumes.proofParams.claimName }}
+{{- end }}
+{{- if .Values.lotus.volumes.localRepo.enabled }}
+        - name: local-repo 
+          hostPath:
+            path: {{ .Values.lotus.volumes.localRepo.hostPath }}
 {{- end }}
       initContainers:
 {{- if .Values.lotus.copyKeys }}
@@ -142,6 +154,8 @@ spec:
         image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotus.cpuArch }}
         command: ["/bin/entrypoint","-d"]
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          privileged: true
         env:
           - name: LOTUS_PATH
             value: /var/lib/lotus
@@ -151,20 +165,11 @@ spec:
             value: "info"
           - name: TMPDIR
             value: /tmp
-          - name: FIL_PROOFS_PARAMETER_CACHE
+{{- if .Values.lotusMiner.volumes.proofParams.enabled }}
             value: /proof-params
-        livenessProbe:
-          httpGet:
-            path: /debug/metrics
-            port: api
-          initialDelaySeconds: 90
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /debug/metrics
-            port: api
-          initialDelaySeconds: 120
-          periodSeconds: 10
+{{- else }}
+            value: /var/tmp/filecoin-proof-parameters
+{{- end }}
         ports:
         - containerPort: 1234
           name: api
@@ -172,10 +177,15 @@ spec:
           name: p2p
         volumeMounts:
           - name: vol
+            mountPath: /var/lib/lotus-bak
+          - name: local-repo
             mountPath: /var/lib/lotus
           - name: lotus-config-volume
             mountPath: /var/lib/lotus/config.toml
             subPath: config.toml
+          - name: lotus-config-volume
+            mountPath: /usr/local/bin/remote-setup.bash
+            subPath: remote-setup.bash
         {{- if and (.Values.lotus.init.import.volume) (.Values.lotus.init.import.enabled) }}
           - name: {{ (index .Values.lotus.init.import.volume 0).name }}
             mountPath: /chain

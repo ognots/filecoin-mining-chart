@@ -1,22 +1,22 @@
-{{- if .Values.lotusPrecomm1Worker.enabled }}
+{{- if .Values.lotusPrecomm2Worker.enabled }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-lotus-precomm1-worker
+  name: {{ .Release.Name }}-lotus-worker-precomm2
   labels:
-    app: lotus-precomm1-worker
+    app: lotus-worker-precomm2-app
 spec:
-  replicas: {{ .Values.lotusPrecomm1Worker.replicaCount }}
+  replicas: {{ .Values.lotusPrecomm2Worker.replicaCount }}
   strategy:
     type: RollingUpdate
   selector:
     matchLabels:
-      app: lotus-precomm1-worker
+      app: lotus-worker-precomm2-app
   template:
     metadata:
       labels:
-        app: lotus-precomm1-worker
+        app: lotus-worker-precomm2-app
         chart: {{ .Chart.Name }}-{{ .Chart.Version }}
         heritage: {{ .Release.Service }}
         release: {{ .Release.Name }}
@@ -39,20 +39,23 @@ spec:
         - name: vol-miner
           persistentVolumeClaim:
             claimName: vol-miner-{{ .Release.Name }}-lotus-miner-0
-{{- if .Values.lotusPrecomm1Worker.volumes.proofParams.enabled }}
+{{- if .Values.lotusPrecomm2Worker.volumes.proofParams.enabled }}
         - name: proof-params
           persistentVolumeClaim:
-            claimName: {{.Values.lotusPrecomm1Worker.volumes.proofParams.claimName }}
+            claimName: {{.Values.lotusPrecomm2Worker.volumes.proofParams.claimName }}
 {{- end }}
-{{- if .Values.lotusPrecomm1Worker.volumes.repo.enabled }}
+{{- if .Values.lotusPrecomm2Worker.volumes.repo.enabled }}
         - name: repo
           hostPath:
-            path: {{ .Values.lotusPrecomm1Worker.volumes.repo.hostPath }}
+            path: {{ .Values.lotusPrecomm2Worker.volumes.repo.hostPath }}
 {{- end }}
+      initContainers:
       containers:
       - name: {{ .Chart.Name }}
-        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusPrecomm1Worker.cpuArch }}
-        command: ["lotus-worker", "run", "--precommit2=false", "--commit=false"]
+        securityContext:
+          privileged: true
+        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusPrecomm2Worker.cpuArch }}
+        command: ["lotus-worker", "run", "--precommit1=false", "--commit=false", "--parallel-fetch-limit=1"]
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         env:
           - name: LOTUS_MINER_TOKEN
@@ -63,13 +66,13 @@ spec:
           - name: MINER_API_INFO
             value: "$(LOTUS_MINER_TOKEN):/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
           - name: LOTUS_STORAGE_PATH
-            value: /var/lib/lotus-miner
+            value: "/var/lib/lotus-miner"
           - name: LOTUS_WORKER_PATH
-            value: /var/lib/lotus-worker
+            value: "/var/lib/lotus-worker"
           - name: GOLOG_LOG_FMT
             value: "json"
           - name: GOLOG_LOG_LEVEL
-            value: "{{ .Values.lotusPrecomm1Worker.gologLogLevel }}"
+            value: "{{ .Values.lotusPrecomm2Worker.gologLogLevel }}"
           - name: FIL_PROOFS_PARAMETER_CACHE
 {{- if .Values.lotusPrecomm1Worker.volumes.proofParams.enabled }}
             value: "/proof-params"
@@ -81,25 +84,31 @@ spec:
           - name: FIL_PROOFS_MAXIMIZE_CACHING
             value: "1"
           - name: RUST_LOG
-            value: info
+            value: "info"
+          - name: FIL_PROOFS_USE_GPU_COLUMN_BUILDER
+            value: "1"
+          - name: FIL_PROOFS_USE_GPU_TREE_BUILDER
+            value: "1"
+          - name: BELLMAN_CUSTOM_GPU
+            value: "{{ .Values.lotusPrecomm2Worker.GPU }}"
         ports:
         - containerPort: 3456
           name: api
         volumeMounts:
           - name: vol-miner
             mountPath: /var/lib/lotus-miner
-{{- if .Values.lotusPrecomm1Worker.volumes.proofParams.enabled }}
+{{- if .Values.lotusPrecomm2Worker.volumes.proofParams.enabled }}
           - name: proof-params
             mountPath: /proof-params
 {{- end }}
-{{- if .Values.lotusPrecomm1Worker.volumes.repo.enabled }}
+{{- if .Values.lotusPrecomm2Worker.volumes.repo.enabled }}
           - name: repo
             mountPath: /var/lib/lotus-worker
 {{- end }}
         resources:
-{{ toYaml .Values.lotusPrecomm1Worker.resources | indent 10 }}
+{{ toYaml .Values.lotusPrecomm2Worker.resources | indent 10 }}
       nodeSelector:
-{{ toYaml .Values.lotusPrecomm1Worker.nodeSelector | indent 8 }}
+{{ toYaml .Values.lotusPrecomm2Worker.nodeSelector | indent 8 }}
       tolerations:
-{{ toYaml .Values.lotusPrecomm1Worker.tolerations | indent 8 }}
+{{ toYaml .Values.lotusPrecomm2Worker.tolerations | indent 8 }}
 {{- end }}

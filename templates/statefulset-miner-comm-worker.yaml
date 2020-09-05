@@ -1,22 +1,24 @@
-{{- if .Values.lotusPrecomm2CommWorker.enabled }}
+{{- if .Values.lotusCommWorker.enabled }}
+{{ $this := . }}
+{{ $containerCount := .Values.lotusCommWorker.containerCount | int }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Release.Name }}-lotus-worker-precomm2-comm
+  name: {{ .Release.Name }}-lotus-worker-comm
   labels:
-    app: lotus-worker-precomm2-comm-app
+    app: lotus-worker-comm-app
 spec:
-  replicas: {{ .Values.lotusPrecomm2CommWorker.replicaCount }}
+  replicas: {{ .Values.lotusCommWorker.replicaCount }}
   strategy:
     type: RollingUpdate
   selector:
     matchLabels:
-      app: lotus-worker-precomm2-comm-app
+      app: lotus-worker-comm-app
   template:
     metadata:
       labels:
-        app: lotus-worker-precomm2-comm-app
+        app: lotus-worker-comm-app
         chart: {{ .Chart.Name }}-{{ .Chart.Version }}
         heritage: {{ .Release.Service }}
         release: {{ .Release.Name }}
@@ -38,45 +40,48 @@ spec:
             defaultMode: 384 # permission 0600
         - name: vol-miner
           persistentVolumeClaim:
-            claimName: vol-miner-{{ .Release.Name }}-lotus-miner-0
-{{- if .Values.lotusPrecomm2CommWorker.volumes.proofParams.enabled }}
+            claimName: vol-miner-mining-pool0-lotus-miner-0
+{{- if .Values.lotusCommWorker.volumes.proofParams.enabled }}
         - name: proof-params
           persistentVolumeClaim:
-            claimName: {{.Values.lotusPrecomm2CommWorker.volumes.proofParams.claimName }}
+            claimName: {{.Values.lotusCommWorker.volumes.proofParams.claimName }}
 {{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.repo.enabled }}
-        - name: repo
+{{- if .Values.lotusCommWorker.volumes.repo.enabled }}
+  {{- range $i := until $containerCount }}
+        - name: repo{{ $i }}
           hostPath:
-            path: {{ .Values.lotusPrecomm2CommWorker.volumes.repo.hostPath }}
+            path: {{ $this.Values.lotusCommWorker.volumes.repo.hostPath }}{{ $i }}
+  {{- end }}
 {{- end }}
       initContainers:
       containers:
-      - name: {{ .Chart.Name }}
+{{- range $i := until $containerCount }}
+      - name: "{{ $this.Chart.Name }}-{{ $i | toString }}"
         securityContext:
           privileged: true
-        image: {{ .Values.image.repository }}:{{ .Chart.AppVersion}}-{{ .Values.lotusPrecomm2CommWorker.cpuArch }}
-        command: ["lotus-worker", "run", "--precommit1=false", "--addpiece=false", "--parallel-fetch-limit=2"]
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        image: {{ $this.Values.image.repository }}:{{ $this.Chart.AppVersion}}-{{ $this.Values.lotusCommWorker.cpuArch }}
+        command: ["lotus-worker", "run", "--precommit1=false", "--precommit2=false", "--parallel-fetch-limit=4", "--listen=0.0.0.0:{{ add 3456 $i }}"]
+        imagePullPolicy: {{ $this.Values.image.pullPolicy }}
         env:
           - name: LOTUS_MINER_TOKEN
             valueFrom:
               secretKeyRef:
-                name: {{ .Release.Name }}-lotus-secret
+                name: {{ $this.Release.Name }}-lotus-secret
                 key: lotus-miner.token
           - name: MINER_API_INFO
-            value: "$(LOTUS_MINER_TOKEN):/ip4/{{ .Values.lotusMiner.IP4 }}/tcp/2345/http"
+            value: "$(LOTUS_MINER_TOKEN):/ip4/{{ $this.Values.lotusMiner.IP4 }}/tcp/2345/http"
           - name: LOTUS_STORAGE_PATH
-            value: /var/lib/lotus-miner
+            value: "/var/lib/lotus-miner"
           - name: LOTUS_WORKER_PATH
-            value: /var/lib/lotus-worker
+            value: "/var/lib/lotus-worker"
           - name: GOLOG_LOG_FMT
             value: "json"
           - name: GOLOG_LOG_LEVEL
-            value: "{{ .Values.lotusPrecomm2CommWorker.gologLogLevel }}"
+            value: "{{ $this.Values.lotusCommWorker.gologLogLevel }}"
           - name: FIL_PROOFS_PARAMETER_CACHE
-{{- if .Values.lotusPrecomm2CommWorker.volumes.proofParams.enabled }}
+{{- if $this.Values.lotusCommWorker.volumes.proofParams.enabled }}
             value: "/proof-params"
-{{- else if .Values.lotusPrecomm2CommWorker.volumes.repo.enabled }}
+{{- else if $this.Values.lotusCommWorker.volumes.repo.enabled }}
             value: "/var/lib/lotus-worker/proof-params"
 {{- else }}
             value: "/var/tmp/filecoin-proof-parameters"
@@ -84,37 +89,34 @@ spec:
           - name: FIL_PROOFS_MAXIMIZE_CACHING
             value: "1"
           - name: RUST_LOG
-            value: info
-          - name: FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE
-            value: "600000"
-          - name: FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE
-            value: "1000000"
+            value: "info"
           - name: FIL_PROOFS_USE_GPU_COLUMN_BUILDER
             value: "1"
           - name: FIL_PROOFS_USE_GPU_TREE_BUILDER
             value: "1"
           - name: BELLMAN_CUSTOM_GPU
-            value: {{ .Values.lotusPrecomm2CommWorker.GPU }}
-            #- name: BELLMAN_CPU_UTILIZATION
-            #value: "0.5"
+            value: "{{ $this.Values.lotusCommWorker.GPU }}"
+          - name: BELLMAN_CPU_UTILIZATION
+            value: "0.5"
         ports:
-        - containerPort: 3456
+        - containerPort: {{ add 3456 $i }}
           name: api
         volumeMounts:
           - name: vol-miner
             mountPath: /var/lib/lotus-miner
-{{- if .Values.lotusPrecomm2CommWorker.volumes.proofParams.enabled }}
+{{- if $this.Values.lotusCommWorker.volumes.proofParams.enabled }}
           - name: proof-params
             mountPath: /proof-params
 {{- end }}
-{{- if .Values.lotusPrecomm2CommWorker.volumes.repo.enabled }}
-          - name: repo
+{{- if $this.Values.lotusCommWorker.volumes.repo.enabled }}
+          - name: repo{{ $i }}
             mountPath: /var/lib/lotus-worker
 {{- end }}
         resources:
-{{ toYaml .Values.lotusPrecomm2CommWorker.resources | indent 10 }}
+{{ toYaml $this.Values.lotusCommWorker.resources | indent 10 }}
+{{- end }}
       nodeSelector:
-{{ toYaml .Values.lotusPrecomm2CommWorker.nodeSelector | indent 8 }}
+{{ toYaml .Values.lotusCommWorker.nodeSelector | indent 8 }}
       tolerations:
-{{ toYaml .Values.lotusPrecomm2CommWorker.tolerations | indent 8 }}
+{{ toYaml .Values.lotusCommWorker.tolerations | indent 8 }}
 {{- end }}
